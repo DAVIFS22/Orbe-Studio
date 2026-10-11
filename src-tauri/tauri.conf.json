@@ -37,7 +37,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "untrusted comment: minisign public key: B2FFE3AF1ACB241F\nRWQfJMsar+P/su39PnQWA+SG60ZBNjT9tgzqeIgFlqpm5jNU2qLsSVZv\n",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyRkZFM0FGMUFDQjI0MUYKUldRZkpNc2FyK1Avc3UzOVBuUVdBK1NHNjBaQk5qVDl0Z3pxZUlnRmxxcG01ak5VMnFMc1NWWnYK",
       "endpoints": [
   "https://github.com/DAVIFS22/orbe-imagem-studio/releases/latest/download/latest.json"],
       "windows": {
