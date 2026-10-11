@@ -4,32 +4,31 @@
         run: |
           $ErrorActionPreference = 'Stop'
 
-          Write-Host 'Procurando imagens de ícone no projeto...'
-
-          $iconsDir = 'src-tauri/icons'
-
+          $iconsDir = Join-Path 'src-tauri' 'icons'
           New-Item -ItemType Directory -Force -Path $iconsDir | Out-Null
 
-          # Mostra no log os arquivos gráficos disponíveis.
+          Write-Host 'Procurando imagens que possam ser usadas como ícone...'
+
+          $excluded = '[\\/](node_modules|target|\.git|dist|build)[\\/]'
+
           $candidates = @(
             Get-ChildItem -Path . -Recurse -File |
               Where-Object {
-                $_.FullName -notmatch '[\\/](node_modules|target|\.git)[\\/]' -and
-                $_.Extension -in @('.png', '.svg')
+                $_.FullName -notmatch $excluded -and
+                $_.Extension.ToLowerInvariant() -in @('.png', '.svg')
               }
           )
 
           if ($candidates.Count -eq 0) {
-            throw 'Nenhum PNG ou SVG foi encontrado no projeto. Inclua a imagem original do aplicativo no ZIP.'
+            throw 'Nenhum PNG ou SVG foi encontrado. Inclua o ícone original do Orbe no ZIP.'
           }
 
           Write-Host 'Imagens encontradas:'
-
           $candidates | ForEach-Object {
-            Write-Host (" - " + $_.FullName)
+            Write-Host " - $($_.FullName)"
           }
 
-          # Prioriza imagens que já estão na pasta padrão do Tauri.
+          # Prioriza arquivos com nomes de ícone dentro da pasta do Tauri.
           $source = $candidates |
             Where-Object {
               $_.DirectoryName -match '[\\/]src-tauri[\\/]icons$' -and
@@ -37,39 +36,35 @@
             } |
             Select-Object -First 1
 
-          # Depois procura nomes conhecidos em outras pastas.
+          # Procura nomes conhecidos em outras pastas.
           if (-not $source) {
             $source = $candidates |
               Where-Object {
-                $_.BaseName -in @('icon', 'app-icon', 'logo', 'logo-app')
+                $_.BaseName -in @('app-icon', 'logo-app', 'app_logo', 'icon', 'logo')
               } |
               Select-Object -First 1
           }
 
-          # Último recurso: uma imagem encontrada no projeto.
-          # O log permite conferir qual arquivo foi selecionado.
+          # Não escolhe uma imagem arbitrária silenciosamente.
           if (-not $source) {
-            $source = $candidates | Select-Object -First 1
+            Write-Host 'Não foi encontrado um arquivo com nome conhecido.'
+            throw 'Renomeie a imagem original do ícone do Orbe para icon.png ou app-icon.png e inclua-a no ZIP.'
           }
 
-          if (-not $source) {
-            throw 'Não foi possível localizar uma imagem para gerar os ícones.'
-          }
+          Write-Host "Imagem escolhida: $($source.FullName)"
 
-          Write-Host "Imagem selecionada: $($source.FullName)"
-
-          if ($source.Extension -eq '.png') {
+          if ($source.Extension.ToLowerInvariant() -eq '.png') {
             Add-Type -AssemblyName System.Drawing
 
             $image = [System.Drawing.Image]::FromFile($source.FullName)
 
             try {
               if ($image.Width -ne $image.Height) {
-                throw "A imagem precisa ser quadrada. Dimensões encontradas: $($image.Width)x$($image.Height)."
+                throw "O PNG deve ser quadrado. Dimensões: $($image.Width)x$($image.Height)."
               }
 
               if ($image.Width -lt 256) {
-                throw "A imagem precisa ter pelo menos 256x256 pixels. Dimensões encontradas: $($image.Width)x$($image.Height)."
+                throw "O PNG precisa ter pelo menos 256x256 pixels. Dimensões: $($image.Width)x$($image.Height)."
               }
             }
             finally {
@@ -77,21 +72,26 @@
             }
           }
 
-          # O Tauri gera os formatos necessários a partir do arquivo escolhido.
+          Write-Host 'Gerando os ícones usando o Tauri CLI...'
+
           npm exec -- tauri icon "$($source.FullName)"
 
           if ($LASTEXITCODE -ne 0) {
-            throw 'O comando tauri icon falhou. Confira a imagem selecionada e o log acima.'
+            throw 'A geração dos ícones falhou. Consulte a mensagem de erro do Tauri acima.'
           }
 
           $iconIco = Join-Path $iconsDir 'icon.ico'
 
           if (-not (Test-Path $iconIco -PathType Leaf)) {
-            throw "O ícone do Windows não foi gerado: $iconIco"
+            throw "O Tauri não gerou o arquivo esperado: $iconIco"
           }
 
           if ((Get-Item $iconIco).Length -eq 0) {
-            throw 'O arquivo icon.ico foi criado, mas está vazio.'
+            throw 'O arquivo icon.ico está vazio.'
           }
 
-          Write-Host 'Ícone do Windows gerado e verificado com sucesso.'
+          Write-Host 'Ícone do Windows gerado e verificado.'
+          Write-Host 'Arquivos gerados na pasta de ícones:'
+
+          Get-ChildItem -Path $iconsDir -File |
+            Select-Object -ExpandProperty Name
