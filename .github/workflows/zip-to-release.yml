@@ -1,0 +1,117 @@
+name: Build and publish Orbe from uploaded ZIP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'incoming/*.zip'
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: 'Caminho de um ZIP já enviado ao repositório, por exemplo incoming/orbe-v14.6.0.zip'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orbe-zip-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Localizar e extrair o ZIP enviado
+        id: source
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $zipPath = '${{ inputs.zip_path }}'
+          } else {
+            $files = git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA | Where-Object { $_ -match '^incoming/.*\.zip$' }
+            if (-not $files) { throw 'Nenhum ZIP encontrado em incoming/*.zip no commit acionador.' }
+            $zipPath = $files | Select-Object -First 1
+          }
+          if (-not (Test-Path -LiteralPath $zipPath)) { throw "ZIP não encontrado: $zipPath" }
+          $extract = Join-Path $env:GITHUB_WORKSPACE '_orbe-source'
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
+          $configs = Get-ChildItem -Path $extract -Filter 'tauri.conf.json' -Recurse | Where-Object { $_.FullName -match '[\\/]src-tauri[\\/]tauri\.conf\.json$' }
+          if ($configs.Count -ne 1) { throw "Esperado exatamente um src-tauri/tauri.conf.json; encontrados: $($configs.Count)" }
+          $project = Split-Path (Split-Path $configs[0].FullName -Parent) -Parent
+          if (-not (Test-Path (Join-Path $project 'package.json')) -or -not (Test-Path (Join-Path $project 'src-tauri/Cargo.toml'))) { throw 'Estrutura do projeto inválida: package.json ou src-tauri/Cargo.toml ausente.' }
+          $relativeProject = [System.IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $project)
+          "project_dir=$relativeProject" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $pkgPath = Join-Path $project 'package.json'
+          $tauriPath = Join-Path $project 'src-tauri/tauri.conf.json'
+          $cargoPath = Join-Path $project 'src-tauri/Cargo.toml'
+          $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+          $tauri = Get-Content $tauriPath -Raw | ConvertFrom-Json
+          $cargo = Get-Content $cargoPath -Raw
+          $version = [string]$pkg.version
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Versão inválida no package.json: $version" }
+          # Alinha automaticamente as versões secundárias ao package.json.
+          $tauri.version = $version
+          $tauri | ConvertTo-Json -Depth 100 | Set-Content -Path $tauriPath -Encoding utf8
+          $cargoMatch = [regex]::Match($cargo, '(?m)^version\s*=\s*"([^"]+)"')
+          if (-not $cargoMatch.Success) { throw 'Não foi possível ler a versão em src-tauri/Cargo.toml.' }
+          $cargo = [regex]::Replace($cargo, '(?m)^version\s*=\s*"[^"]+"', 'version = "' + $version + '"', 1)
+          Set-Content -Path $cargoPath -Value $cargo -Encoding utf8
+          # A chave pública é injetada a partir do secret dedicado para manter o par sincronizado.
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PUBLIC_KEY)) { throw 'Configure o secret TAURI_SIGNING_PUBLIC_KEY com a chave pública que corresponde à chave privada do atualizador.' }
+          $tauri.plugins.updater.pubkey = $env:TAURI_SIGNING_PUBLIC_KEY.Trim()
+          $tauri | ConvertTo-Json -Depth 100 | Set-Content -Path $tauriPath -Encoding utf8
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Versão $version alinhada em package.json, tauri.conf.json e Cargo.toml."
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configurar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Instalar dependências
+        shell: pwsh
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: npm install
+
+      - name: Gerar bundle do atualizador
+        shell: pwsh
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: npm run build:updater
+
+      - name: Validar compilação Windows antes de publicar
+        shell: pwsh
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) { throw 'Secret TAURI_SIGNING_PRIVATE_KEY não configurado.' }
+          npm run build
+
+      - name: Publicar release assinada no GitHub
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ${{ steps.source.outputs.project_dir }}
+          tagName: v${{ steps.source.outputs.version }}
+          releaseName: 'Orbe Imagem Studio v${{ steps.source.outputs.version }}'
+          releaseBody: 'Atualização do Orbe Imagem Studio gerada automaticamente após validação e compilação do ZIP enviado.'
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
