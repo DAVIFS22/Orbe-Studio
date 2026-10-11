@@ -1,249 +1,97 @@
-name: Build and publish Orbe from uploaded ZIP
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'incoming/*.zip'
-
-  workflow_dispatch:
-    inputs:
-      zip_path:
-        description: 'Caminho do ZIP, por exemplo incoming/orbe-imagem-studio-v14.6.0-corrigido.zip'
-        required: true
-        type: string
-
-permissions:
-  contents: write
-
-concurrency:
-  group: orbe-zip-release
-  cancel-in-progress: false
-
-jobs:
-  build-and-release:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout do repositório
-        uses: actions/checkout@v4
-
-      - name: Localizar, extrair e preparar o projeto
-        id: source
+      - name: Localizar e gerar ícones do aplicativo
         shell: pwsh
-        env:
-          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+        working-directory: ${{ steps.source.outputs.project_dir }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            $zipPath = '${{ inputs.zip_path }}'
-          } else {
-            $files = git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA |
-              Where-Object { $_ -match '^incoming/.*\.zip$' }
+          Write-Host 'Procurando imagens de ícone no projeto...'
 
-            if (-not $files) {
-              throw 'Nenhum ZIP encontrado em incoming/*.zip no commit acionador.'
-            }
+          $iconsDir = 'src-tauri/icons'
 
-            $zipPath = $files | Select-Object -First 1
-          }
+          New-Item -ItemType Directory -Force -Path $iconsDir | Out-Null
 
-          if (!(Test-Path -LiteralPath $zipPath -PathType Leaf)) {
-            throw "ZIP não encontrado: $zipPath"
-          }
-
-          $extract = Join-Path $env:GITHUB_WORKSPACE '_orbe-source'
-
-          if (Test-Path $extract) {
-            Remove-Item -LiteralPath $extract -Recurse -Force
-          }
-
-          New-Item -ItemType Directory -Force -Path $extract | Out-Null
-
-          Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
-
-          $configs = @(
-            Get-ChildItem -Path $extract -Filter 'tauri.conf.json' -Recurse |
+          # Mostra no log os arquivos gráficos disponíveis.
+          $candidates = @(
+            Get-ChildItem -Path . -Recurse -File |
               Where-Object {
-                $_.FullName -match '[\\/]src-tauri[\\/]tauri\.conf\.json$'
+                $_.FullName -notmatch '[\\/](node_modules|target|\.git)[\\/]' -and
+                $_.Extension -in @('.png', '.svg')
               }
           )
 
-          if ($configs.Count -ne 1) {
-            throw "Esperado exatamente um src-tauri/tauri.conf.json; encontrados: $($configs.Count)"
+          if ($candidates.Count -eq 0) {
+            throw 'Nenhum PNG ou SVG foi encontrado no projeto. Inclua a imagem original do aplicativo no ZIP.'
           }
 
-          $project = Split-Path (Split-Path $configs[0].FullName -Parent) -Parent
+          Write-Host 'Imagens encontradas:'
 
-          $requiredFiles = @(
-            'package.json',
-            'src-tauri/Cargo.toml',
-            'src-tauri/tauri.conf.json'
-          )
+          $candidates | ForEach-Object {
+            Write-Host (" - " + $_.FullName)
+          }
 
-          foreach ($file in $requiredFiles) {
-            if (!(Test-Path (Join-Path $project $file) -PathType Leaf)) {
-              throw "Arquivo obrigatório ausente: $file"
+          # Prioriza imagens que já estão na pasta padrão do Tauri.
+          $source = $candidates |
+            Where-Object {
+              $_.DirectoryName -match '[\\/]src-tauri[\\/]icons$' -and
+              $_.BaseName -in @('icon', 'app-icon', 'logo')
+            } |
+            Select-Object -First 1
+
+          # Depois procura nomes conhecidos em outras pastas.
+          if (-not $source) {
+            $source = $candidates |
+              Where-Object {
+                $_.BaseName -in @('icon', 'app-icon', 'logo', 'logo-app')
+              } |
+              Select-Object -First 1
+          }
+
+          # Último recurso: uma imagem encontrada no projeto.
+          # O log permite conferir qual arquivo foi selecionado.
+          if (-not $source) {
+            $source = $candidates | Select-Object -First 1
+          }
+
+          if (-not $source) {
+            throw 'Não foi possível localizar uma imagem para gerar os ícones.'
+          }
+
+          Write-Host "Imagem selecionada: $($source.FullName)"
+
+          if ($source.Extension -eq '.png') {
+            Add-Type -AssemblyName System.Drawing
+
+            $image = [System.Drawing.Image]::FromFile($source.FullName)
+
+            try {
+              if ($image.Width -ne $image.Height) {
+                throw "A imagem precisa ser quadrada. Dimensões encontradas: $($image.Width)x$($image.Height)."
+              }
+
+              if ($image.Width -lt 256) {
+                throw "A imagem precisa ter pelo menos 256x256 pixels. Dimensões encontradas: $($image.Width)x$($image.Height)."
+              }
+            }
+            finally {
+              $image.Dispose()
             }
           }
 
-          $relativeProject = [System.IO.Path]::GetRelativePath(
-            $env:GITHUB_WORKSPACE,
-            $project
-          ).Replace('\', '/')
+          # O Tauri gera os formatos necessários a partir do arquivo escolhido.
+          npm exec -- tauri icon "$($source.FullName)"
 
-          "project_dir=$relativeProject" |
-            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-          $pkgPath = Join-Path $project 'package.json'
-          $tauriPath = Join-Path $project 'src-tauri/tauri.conf.json'
-          $cargoPath = Join-Path $project 'src-tauri/Cargo.toml'
-
-          $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
-          $tauri = Get-Content $tauriPath -Raw | ConvertFrom-Json
-          $cargo = Get-Content $cargoPath -Raw
-
-          $version = [string]$pkg.version
-
-          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
-            throw "Versão inválida no package.json: $version"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'O comando tauri icon falhou. Confira a imagem selecionada e o log acima.'
           }
 
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PUBLIC_KEY)) {
-            throw 'Configure o secret TAURI_SIGNING_PUBLIC_KEY com a chave pública correta.'
-          }
+          $iconIco = Join-Path $iconsDir 'icon.ico'
 
-          if (!$tauri.plugins -or !$tauri.plugins.updater) {
-            throw 'Configuração plugins.updater ausente no tauri.conf.json.'
-          }
-
-          $tauri.version = $version
-          $tauri.plugins.updater.pubkey = $env:TAURI_SIGNING_PUBLIC_KEY.Trim()
-
-          $tauri | ConvertTo-Json -Depth 100 |
-            Set-Content -Path $tauriPath -Encoding utf8
-
-          $cargoMatch = [regex]::Match(
-            $cargo,
-            '(?m)^version\s*=\s*"([^"]+)"'
-          )
-
-          if (!$cargoMatch.Success) {
-            throw 'Não foi possível encontrar a versão no Cargo.toml.'
-          }
-
-          $cargo = [regex]::Replace(
-            $cargo,
-            '(?m)^version\s*=\s*"[^"]+"',
-            ('version = "' + $version + '"'),
-            1
-          )
-
-          Set-Content -Path $cargoPath -Value $cargo -Encoding utf8
-
-          "version=$version" |
-            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-          Write-Host "Projeto: $relativeProject"
-          Write-Host "Versão preparada: $version"
-
-      - name: Configurar Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Configurar Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Instalar dependências
-        shell: pwsh
-        working-directory: ${{ steps.source.outputs.project_dir }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          npm install
-
-      - name: Gerar bundle do atualizador
-        shell: pwsh
-        working-directory: ${{ steps.source.outputs.project_dir }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          npm run build:updater
-
-      - name: Gerar ícones do aplicativo
-        shell: pwsh
-        working-directory: ${{ steps.source.outputs.project_dir }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $iconPng = 'src-tauri/icons/icon.png'
-          $iconIco = 'src-tauri/icons/icon.ico'
-
-          if (!(Test-Path $iconPng -PathType Leaf)) {
-            throw "O ícone PNG não foi encontrado em $iconPng. Verifique os arquivos do ZIP."
-          }
-
-          Add-Type -AssemblyName System.Drawing
-
-          $image = [System.Drawing.Image]::FromFile(
-            (Resolve-Path $iconPng).Path
-          )
-
-          try {
-            if ($image.Width -ne $image.Height) {
-              throw "O ícone PNG deve ser quadrado. Dimensões atuais: $($image.Width)x$($image.Height)."
-            }
-
-            if ($image.Width -lt 256) {
-              throw "O ícone PNG precisa ter pelo menos 256x256 pixels. Dimensões atuais: $($image.Width)x$($image.Height)."
-            }
-          }
-          finally {
-            $image.Dispose()
-          }
-
-          npm exec -- tauri icon $iconPng
-
-          if (!(Test-Path $iconIco -PathType Leaf)) {
-            throw 'O comando Tauri terminou sem gerar src-tauri/icons/icon.ico.'
+          if (-not (Test-Path $iconIco -PathType Leaf)) {
+            throw "O ícone do Windows não foi gerado: $iconIco"
           }
 
           if ((Get-Item $iconIco).Length -eq 0) {
-            throw 'O arquivo icon.ico está vazio.'
+            throw 'O arquivo icon.ico foi criado, mas está vazio.'
           }
 
-          Write-Host 'Ícone Windows gerado e verificado.'
-
-      - name: Validar compilação Windows antes de publicar
-        shell: pwsh
-        working-directory: ${{ steps.source.outputs.project_dir }}
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            throw 'Secret TAURI_SIGNING_PRIVATE_KEY não configurado.'
-          }
-
-          npm run build
-
-          if ($LASTEXITCODE -ne 0) {
-            throw 'A compilação falhou. A publicação foi interrompida.'
-          }
-
-      - name: Publicar release assinada no GitHub
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: ${{ steps.source.outputs.project_dir }}
-          tagName: v${{ steps.source.outputs.version }}
-          releaseName: 'Orbe Imagem Studio v${{ steps.source.outputs.version }}'
-          releaseBody: 'Atualização do Orbe Imagem Studio gerada automaticamente após validação e compilação do ZIP enviado.'
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
+          Write-Host 'Ícone do Windows gerado e verificado com sucesso.'
