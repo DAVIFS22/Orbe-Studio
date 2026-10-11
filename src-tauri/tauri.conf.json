@@ -26,6 +26,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": [
+      "icons/icon.ico"
+    ],
     "resources": {
       "../ai/remove_background.py": "ai/remove_background.py",
       "../ai/requirements-ai.txt": "ai/requirements-ai.txt"
@@ -34,9 +37,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "COLE_A_CHAVE_PUBLICA_GERADA_PELO_TAURI",
+      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklFSXlSa1pGTTBGR01VRkRRakkwTVVZS1VsZFJaa3BOYzJGeUsxQXZjM1V6T1ZCdVVWZEJLMU5ITmpCYVFrNXFWRGwwWjNweFpVbG5SbXh4Y0cwMWFrNVZNbkZNYzFOV1duWUs=",
       "endpoints": [
-        "https://github.com/SEU_USUARIO/SEU_REPOSITORIO/releases/latest/download/latest.json"
+        "https://github.com/DAVIFS22/orbe-imagem-studio/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
