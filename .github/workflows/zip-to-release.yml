@@ -45,7 +45,7 @@ jobs:
             $zipFiles = @($changedFiles | Where-Object { $_ -match '^incoming/.*\.zip$' })
 
             if ($zipFiles.Count -eq 0) {
-              throw 'Nenhum ZIP foi encontrado no commit. Execute o workflow manualmente.'
+              throw 'Nenhum ZIP encontrado no commit.'
             }
 
             $zipPath = $zipFiles[0]
@@ -66,13 +66,11 @@ jobs:
 
           $configs = @(
             Get-ChildItem -Path $extract -Filter 'tauri.conf.json' -Recurse -File |
-              Where-Object {
-                $_.FullName -match '[\\/]src-tauri[\\/]tauri\.conf\.json$'
-              }
+              Where-Object { $_.FullName -match '[\\/]src-tauri[\\/]tauri\.conf\.json$' }
           )
 
           if ($configs.Count -ne 1) {
-            throw "Esperado exatamente um src-tauri/tauri.conf.json; encontrados: $($configs.Count)"
+            throw "Esperado um src-tauri/tauri.conf.json; encontrados: $($configs.Count)"
           }
 
           $project = Split-Path (Split-Path $configs[0].FullName -Parent) -Parent
@@ -106,7 +104,7 @@ jobs:
           $version = [string]$pkg.version
 
           if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
-            throw "Versão inválida no package.json: $version"
+            throw "Versão inválida: $version"
           }
 
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PUBLIC_KEY)) {
@@ -114,7 +112,7 @@ jobs:
           }
 
           if (!$tauri.plugins -or !$tauri.plugins.updater) {
-            throw 'Configuração plugins.updater ausente no tauri.conf.json.'
+            throw 'Configuração plugins.updater ausente.'
           }
 
           $tauri.version = $version
@@ -124,13 +122,10 @@ jobs:
             ConvertTo-Json -Depth 100 |
             Set-Content -LiteralPath $tauriPath -Encoding utf8
 
-          $cargoMatch = [regex]::Match(
-            $cargo,
-            '(?m)^version\s*=\s*"([^"]+)"'
-          )
+          $cargoMatch = [regex]::Match($cargo, '(?m)^version\s*=\s*"([^"]+)"')
 
           if (!$cargoMatch.Success) {
-            throw 'Não foi possível encontrar a versão no Cargo.toml.'
+            throw 'Versão não encontrada no Cargo.toml.'
           }
 
           $cargo = [regex]::Replace(
@@ -167,6 +162,97 @@ jobs:
             throw 'Falha ao instalar as dependências.'
           }
 
+      - name: Preparar ícones do aplicativo
+        shell: pwsh
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $configPath = 'src-tauri/tauri.conf.json'
+          $iconsDir = 'src-tauri/icons'
+          $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+
+          if (!(Test-Path -LiteralPath $iconsDir -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $iconsDir | Out-Null
+          }
+
+          $iconFiles = @(
+            'icons/32x32.png',
+            'icons/128x128.png',
+            'icons/128x128@2x.png',
+            'icons/icon.png',
+            'icons/icon.ico',
+            'icons/icon.icns'
+          )
+
+          $availableIcons = @(
+            $iconFiles | Where-Object {
+              Test-Path -LiteralPath (Join-Path 'src-tauri' $_) -PathType Leaf
+            }
+          )
+
+          if ($availableIcons.Count -eq 0) {
+            Write-Host 'Nenhum ícone padrão encontrado. Procurando imagens de origem.'
+
+            $sourceImages = @(
+              Get-ChildItem -Path . -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object {
+                  $_.FullName -notmatch '[\\/](node_modules|\.git|target|dist|build)[\\/]' -and
+                  $_.Extension -match '^\.(png|ico|svg)$' -and
+                  $_.BaseName -match '(?i)(icon|logo|app)'
+                } |
+                Sort-Object FullName
+            )
+
+            if ($sourceImages.Count -gt 0) {
+              $sourceImage = [System.IO.Path]::GetRelativePath(
+                (Get-Location).Path,
+                $sourceImages[0].FullName
+              )
+
+              Write-Host "Tentando gerar ícones usando: $sourceImage"
+
+              npm exec tauri icon $sourceImage
+
+              if ($LASTEXITCODE -eq 0) {
+                $availableIcons = @(
+                  $iconFiles | Where-Object {
+                    Test-Path -LiteralPath (Join-Path 'src-tauri' $_) -PathType Leaf
+                  }
+                )
+              }
+            }
+          }
+
+          if ($availableIcons.Count -eq 0) {
+            Get-ChildItem -LiteralPath $iconsDir -File -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "Arquivo existente: $($_.Name)" }
+
+            throw 'Nenhum ícone utilizável encontrado. Adicione ícones PNG e ICO válidos ao ZIP.'
+          }
+
+          if (!$config.bundle) {
+            $config | Add-Member -MemberType NoteProperty -Name bundle -Value ([pscustomobject]@{})
+          }
+
+          $config.bundle.icon = @($availableIcons)
+
+          $config |
+            ConvertTo-Json -Depth 100 |
+            Set-Content -LiteralPath $configPath -Encoding utf8
+
+          Write-Host 'Ícones configurados:'
+
+          foreach ($icon in $availableIcons) {
+            $iconPath = Join-Path 'src-tauri' $icon
+
+            if ((Get-Item -LiteralPath $iconPath).Length -eq 0) {
+              throw "Arquivo de ícone vazio: $iconPath"
+            }
+
+            Write-Host " - $icon"
+          }
+
       - name: Gerar bundle do atualizador
         shell: pwsh
         working-directory: ${{ steps.source.outputs.project_dir }}
@@ -176,41 +262,6 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) {
             throw 'Falha ao gerar o bundle do atualizador.'
-          }
-
-      - name: Verificar ícones do aplicativo
-        shell: pwsh
-        working-directory: ${{ steps.source.outputs.project_dir }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $configPath = 'src-tauri/tauri.conf.json'
-          $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-
-          $icons = @()
-
-          if ($config.bundle -and $config.bundle.icon) {
-            $icons = @($config.bundle.icon)
-          }
-
-          if ($icons.Count -eq 0) {
-            Write-Host 'Nenhum ícone declarado em bundle.icon.'
-            Write-Host 'Verifique a configuração do Tauri antes de publicar.'
-            throw 'A configuração de ícones do aplicativo precisa ser revisada.'
-          }
-
-          foreach ($icon in $icons) {
-            $iconPath = Join-Path 'src-tauri' ([string]$icon)
-
-            if (!(Test-Path -LiteralPath $iconPath -PathType Leaf)) {
-              throw "Ícone configurado não encontrado: $iconPath. Corrija bundle.icon ou inclua o arquivo no ZIP."
-            }
-
-            if ((Get-Item -LiteralPath $iconPath).Length -eq 0) {
-              throw "O arquivo de ícone está vazio: $iconPath"
-            }
-
-            Write-Host "Ícone verificado: $iconPath"
           }
 
       - name: Validar compilação Windows antes de publicar
@@ -224,6 +275,10 @@ jobs:
 
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             throw 'Secret TAURI_SIGNING_PRIVATE_KEY não configurado.'
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw 'Secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD não configurado.'
           }
 
           npm run build
