@@ -156,6 +156,7 @@ jobs:
         working-directory: ${{ steps.source.outputs.project_dir }}
         run: |
           $ErrorActionPreference = 'Stop'
+
           npm install
 
           if ($LASTEXITCODE -ne 0) {
@@ -170,7 +171,9 @@ jobs:
 
           $configPath = 'src-tauri/tauri.conf.json'
           $iconsDir = 'src-tauri/icons'
-          $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+
+          $config = Get-Content -LiteralPath $configPath -Raw |
+            ConvertFrom-Json
 
           if (!(Test-Path -LiteralPath $iconsDir -PathType Container)) {
             New-Item -ItemType Directory -Force -Path $iconsDir | Out-Null
@@ -192,7 +195,7 @@ jobs:
           )
 
           if ($availableIcons.Count -eq 0) {
-            Write-Host 'Nenhum ícone padrão encontrado. Procurando imagens de origem.'
+            Write-Host 'Procurando imagem para gerar os ícones.'
 
             $sourceImages = @(
               Get-ChildItem -Path . -Recurse -File -ErrorAction SilentlyContinue |
@@ -210,54 +213,85 @@ jobs:
                 $sourceImages[0].FullName
               )
 
-              Write-Host "Tentando gerar ícones usando: $sourceImage"
+              Write-Host "Gerando ícones a partir de: $sourceImage"
 
               npm exec tauri icon $sourceImage
 
-              if ($LASTEXITCODE -eq 0) {
-                $availableIcons = @(
-                  $iconFiles | Where-Object {
-                    Test-Path -LiteralPath (Join-Path 'src-tauri' $_) -PathType Leaf
-                  }
-                )
+              if ($LASTEXITCODE -ne 0) {
+                throw 'Falha ao gerar ícones a partir da imagem encontrada.'
               }
+
+              $availableIcons = @(
+                $iconFiles | Where-Object {
+                  Test-Path -LiteralPath (Join-Path 'src-tauri' $_) -PathType Leaf
+                }
+              )
             }
           }
 
           if ($availableIcons.Count -eq 0) {
-            Get-ChildItem -LiteralPath $iconsDir -File -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "Arquivo existente: $($_.Name)" }
-
-            throw 'Nenhum ícone utilizável encontrado. Adicione ícones PNG e ICO válidos ao ZIP.'
+            throw 'Nenhum ícone encontrado. Adicione ícones PNG ou ICO válidos ao ZIP.'
           }
 
-          if (!$config.bundle) {
-            $config | Add-Member -MemberType NoteProperty -Name bundle -Value ([pscustomobject]@{})
+          # Cria um objeto bundle novo, preservando as configurações existentes.
+          # A propriedade icon é adicionada explicitamente.
+          $bundleData = [ordered]@{}
+
+          if ($null -ne $config.bundle) {
+            foreach ($property in $config.bundle.PSObject.Properties) {
+              if ($property.Name -ne 'icon') {
+                $bundleData[$property.Name] = $property.Value
+              }
+            }
           }
 
-          $config.bundle.icon = @($availableIcons)
+          $bundleData['icon'] = @($availableIcons)
 
-          $config |
-            ConvertTo-Json -Depth 100 |
-            Set-Content -LiteralPath $configPath -Encoding utf8
+          $configData = [ordered]@{}
 
-          Write-Host 'Ícones configurados:'
+          foreach ($property in $config.PSObject.Properties) {
+            if ($property.Name -ne 'bundle') {
+              $configData[$property.Name] = $property.Value
+            }
+          }
 
-          foreach ($icon in $availableIcons) {
+          $configData['bundle'] = $bundleData
+
+          $json = $configData | ConvertTo-Json -Depth 100
+
+          Set-Content -LiteralPath $configPath -Value $json -Encoding utf8
+
+          # Reabre a configuração para verificar o resultado.
+          $verified = Get-Content -LiteralPath $configPath -Raw |
+            ConvertFrom-Json
+
+          if ($null -eq $verified.bundle.icon -or
+              @($verified.bundle.icon).Count -eq 0) {
+            throw 'A configuração dos ícones não foi salva corretamente.'
+          }
+
+          foreach ($icon in $verified.bundle.icon) {
             $iconPath = Join-Path 'src-tauri' $icon
+
+            if (!(Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+              throw "Ícone configurado não encontrado: $iconPath"
+            }
 
             if ((Get-Item -LiteralPath $iconPath).Length -eq 0) {
               throw "Arquivo de ícone vazio: $iconPath"
             }
 
-            Write-Host " - $icon"
+            Write-Host "Ícone validado: $icon"
           }
+
+          Write-Host 'Configuração dos ícones concluída.'
 
       - name: Gerar bundle do atualizador
         shell: pwsh
         working-directory: ${{ steps.source.outputs.project_dir }}
         run: |
           $ErrorActionPreference = 'Stop'
+
           npm run build:updater
 
           if ($LASTEXITCODE -ne 0) {
