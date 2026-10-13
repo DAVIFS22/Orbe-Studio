@@ -1,0 +1,9 @@
+ORBE portable mode
+
+While this file sits next to orbe.exe, ORBE keeps its preferences, brush presets,
+crash-recovery autosaves and startup state in the ORBEData folder beside it, and writes
+nothing to %APPDATA%. Copy the whole folder to move ORBE with its settings.
+
+Delete this file to use the normal per-user settings folder (%APPDATA%\ORBE) instead.
+If ORBEData can't be written (for example on a read-only drive), ORBE says so and
+uses %APPDATA%\ORBE instead.

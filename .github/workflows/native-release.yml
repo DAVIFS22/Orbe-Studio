@@ -1,0 +1,63 @@
+name: ORBE Studio Native Windows Release
+
+on:
+  push:
+    tags:
+      - 'v14.8.9'
+      - 'v14.8.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orbe-native-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build native ORBE Studio
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --release -p orbe --bin orbe-studio --features heif
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo build failed.' }
+          if (!(Test-Path 'target/release/orbe-studio.exe')) { throw 'Executable not produced.' }
+
+      - name: Prepare portable package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item 'target/release/orbe-studio.exe' 'dist/ORBE-Studio-14.8.9-Windows.exe'
+          Copy-Item 'README.md' 'dist/README.txt'
+          Compress-Archive -Path 'dist/*' -DestinationPath 'ORBE-Studio-14.8.9-Windows-x64.zip' -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ORBE-Studio-14.8.9-Windows-x64
+          path: ORBE-Studio-14.8.9-Windows-x64.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release for tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ORBE Studio ${{ github.ref_name }} - Windows nativo
+          generate_release_notes: true
+          files: |
+            dist/ORBE-Studio-14.8.9-Windows.exe
+            ORBE-Studio-14.8.9-Windows-x64.zip

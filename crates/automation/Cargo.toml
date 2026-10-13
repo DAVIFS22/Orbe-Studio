@@ -1,0 +1,32 @@
+[package]
+name = "orbe-automation"
+description = "MCP server (rmcp) over the ORBE engine, plus a bridge to a running GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+orbe-geom = { workspace = true }
+orbe-doc = { workspace = true }
+orbe-compose = { workspace = true }
+orbe-codecs = { workspace = true }
+orbe-io = { workspace = true }
+orbe-format = { path = "../format" }
+orbe-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rmcp = { version = "3.5", default-features = false, features = ["server", "macros", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "net", "io-util", "time"] }
+base64 = "0.22"
+schemars = "1"
+getrandom = { workspace = true }
+cap-std = "4"
+
+[dev-dependencies]
+rmcp = { version = "3.5", default-features = false, features = ["client", "server", "macros", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "net", "io-util", "time"] }

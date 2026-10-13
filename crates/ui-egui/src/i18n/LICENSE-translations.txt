@@ -1,0 +1,24 @@
+ORBE's Korean, German, Brazilian Portuguese, Italian, Ukrainian, Dutch and Czech UI translation catalogs are
+licensed under MIT OR Apache-2.0, at your option. The full license texts are in ../../../../LICENSE-MIT
+and ../../../../LICENSE-APACHE.
+
+Korean translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.
+
+German translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.
+
+Brazilian Portuguese translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.
+
+Italian translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.
+
+Ukrainian translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.
+
+Dutch translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.
+
+Czech translations: ORBE contributors, original translations of
+ORBE's English labels; no proprietary translation resources were used.

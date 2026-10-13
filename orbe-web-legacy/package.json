@@ -1,0 +1,20 @@
+{
+  "name": "orbe-imagem-studio",
+  "private": true,
+  "version": "14.5.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:updater": "esbuild updater.js --bundle --format=iife --platform=browser --outfile=public/updater.bundle.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0",
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-updater": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0"
+  }
+}

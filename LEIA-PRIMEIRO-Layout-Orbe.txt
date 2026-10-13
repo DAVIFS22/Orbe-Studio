@@ -1,0 +1,7 @@
+ORBE STUDIO 14.8.5 — AJUSTE DE LAYOUT
+
+Ajuste realizado: o dock lateral usado na tela inicial foi alinhado para 300 pontos, o mesmo valor do dock padrão do editor. A janela principal permanece em 1440 x 900 e mínimo 760 x 480. O arquivo crates/ui-egui/src/panel_docking.rs foi comparado com o ORBE de referência e mantém a mesma implementação de docking; por isso, larguras e alturas de grupos seguem o mesmo sistema.
+
+IMPORTANTE: preferências de layout salvas pelo usuário podem sobrepor tamanhos padrão. Para validar os padrões, abra Window > Workspace e selecione o workspace padrão/resetar layout (o nome pode variar conforme idioma). Projetos não devem ser apagados.
+
+Validação desta entrega: verificação estrutural do ZIP e alteração textual conferida. Não foi possível compilar/executar Rust neste ambiente; portanto, esta alteração ainda requer build no Windows.

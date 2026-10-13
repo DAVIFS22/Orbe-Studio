@@ -1,0 +1,27 @@
+[package]
+name = "orbe-compose"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+orbe-geom = { workspace = true }
+orbe-color = { workspace = true }
+orbe-raster = { workspace = true }
+orbe-doc = { workspace = true }
+orbe-vector = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+orbe-paint = { workspace = true }
+
+[[bench]]
+name = "compose"
+harness = false
