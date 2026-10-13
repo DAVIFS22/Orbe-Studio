@@ -41,11 +41,23 @@ jobs:
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $zipPath = '${{ inputs.zip_path }}'
           } else {
-            $changedFiles = @(git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA)
-            $zipFiles = @($changedFiles | Where-Object { $_ -match '^incoming/.*\.zip$' })
+            # Usa o evento do GitHub para localizar o ZIP adicionado/alterado.
+            # Em commits de merge ou commits sem pai, diff-tree pode não retornar arquivos.
+            $changedFiles = @(
+              git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA
+            )
+            if ($LASTEXITCODE -ne 0 -or $changedFiles.Count -eq 0) {
+              $changedFiles = @(git show --pretty="" --name-only $env:GITHUB_SHA)
+            }
+
+            $zipFiles = @(
+              $changedFiles |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -match '^incoming/.*\.zip$' }
+            )
 
             if ($zipFiles.Count -eq 0) {
-              throw 'Nenhum ZIP encontrado no commit.'
+              throw 'Nenhum ZIP encontrado no commit. Execute manualmente com workflow_dispatch e informe zip_path.'
             }
 
             $zipPath = $zipFiles[0]
@@ -74,6 +86,19 @@ jobs:
           }
 
           $project = Split-Path (Split-Path $configs[0].FullName -Parent) -Parent
+
+          # O ZIP contém um aplicativo legado aninhado que compartilha a árvore do
+          # projeto principal. Declare-o como workspace independente para o Cargo.
+          $legacyCargoPath = Join-Path $project 'orbe-web-legacy/src-tauri/Cargo.toml'
+          if (Test-Path -LiteralPath $legacyCargoPath -PathType Leaf) {
+            $legacyCargo = Get-Content -LiteralPath $legacyCargoPath -Raw
+            if ($legacyCargo -notmatch '(?m)^\s*\[workspace\]\s*$') {
+              Add-Content -LiteralPath $legacyCargoPath -Value "`r`n[workspace]`r`n" -Encoding utf8
+              Write-Host 'Workspace independente configurado para orbe-web-legacy.'
+            } else {
+              Write-Host 'orbe-web-legacy já declara seu próprio workspace.'
+            }
+          }
 
           foreach ($required in @(
             'package.json',
